@@ -8,6 +8,7 @@ import sklearn
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
 
+
 # ==================================================
 # Page Configuration
 # ==================================================
