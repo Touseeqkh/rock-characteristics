@@ -4,10 +4,11 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import plotly.express as px
+
+# IMPORTANT: required for unpickling the model
 import sklearn
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
-
 
 # ==================================================
 # Page Configuration
@@ -20,19 +21,21 @@ st.set_page_config(
 # ==================================================
 # Dark Theme Styling
 # ==================================================
-st.markdown("""
-<style>
-.stApp {
-    background-color: #0e1117;
-    color: white;
-}
-</style>
-""", unsafe_allow_html=True)
+st.markdown(
+    """
+    <style>
+    .stApp {
+        background-color: #0e1117;
+        color: white;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 # ==================================================
-# Load Model Artifacts
+# Load Model Artifacts (NO CACHE – SAFE FOR DEPLOY)
 # ==================================================
-@st.cache_resource
 def load_artifacts():
     model = joblib.load("rf_model.joblib")
     scaler = joblib.load("scaler.joblib")
@@ -55,10 +58,10 @@ for feature in feature_cols:
     )
 
 st.sidebar.subheader("Sequence S")
-st.sidebar.write("Format: rain/snow;acidity;temperature")
+st.sidebar.write("Format: rain/snow; acidity; temperature")
 
 events_text = st.sidebar.text_area(
-    "Enter events (one per line)",
+    "Enter one event per line",
     "rain;0.6;12\nsnow;0.3;2\nrain;0.8;15"
 )
 
@@ -68,7 +71,7 @@ events_text = st.sidebar.text_area(
 left_col, right_col = st.columns([1.3, 1])
 
 # ==================================================
-# LEFT SIDE → 3D Visualization
+# LEFT → 3D Visualization
 # ==================================================
 with left_col:
     st.subheader("3D Environmental Representation")
@@ -89,15 +92,15 @@ with left_col:
         st.plotly_chart(fig, use_container_width=True)
 
         st.write(
-            "This 3D visualization helps non-technical users understand "
-            "how environmental factors interact together."
+            "This 3D visualization shows how environmental factors "
+            "interact with each other."
         )
 
-    except:
-        st.warning("3D data is not available.")
+    except Exception:
+        st.warning("3D data not available.")
 
 # ==================================================
-# Explanation Helpers (SHAP-Inspired, Simple)
+# Explanation Helpers (Simple, Non-Technical)
 # ==================================================
 def risk_label(pred):
     if pred < 0.25:
@@ -110,29 +113,29 @@ def risk_label(pred):
         return "VERY HIGH RISK"
 
 
-def explain_event_with_shap_simple(pred, inputs):
+def explain_event_simple(pred, inputs):
     reasons = []
 
-    avg_value = np.mean(list(inputs.values()))
+    avg_val = np.mean(list(inputs.values()))
 
-    if avg_value < 0.3:
-        reasons.append("The event had very low acidity, helping keep the leachate low.")
-    elif avg_value < 0.6:
-        reasons.append("Moderate acidity slightly increased the leachate level.")
+    if avg_val < 0.3:
+        reasons.append("The event had very low acidity, helping keep leachate low.")
+    elif avg_val < 0.6:
+        reasons.append("Moderate acidity slightly increased leachate levels.")
     else:
         reasons.append("High acidity strongly increased leachate formation.")
 
     if inputs.get("Na", 0.3) < 0.4 or inputs.get("K", 0.3) < 0.4:
-        reasons.append("Lower potassium and sodium levels helped control the leachate.")
+        reasons.append("Lower sodium and potassium helped control leachate.")
     else:
         reasons.append("Higher salt content contributed to leachate formation.")
 
-    reasons.append("Overall stable water chemistry helped regulate the system.")
+    reasons.append("Overall water chemistry remained relatively stable.")
 
     return reasons
 
 # ==================================================
-# RIGHT SIDE → Prediction Logic
+# RIGHT → Prediction Logic
 # ==================================================
 with right_col:
     st.title("Leachate Prediction Application")
@@ -147,7 +150,7 @@ with right_col:
         """
     )
 
-    # Parse events
+    # Parse sequence S
     events = []
     for line in events_text.split("\n"):
         if line.strip():
@@ -158,10 +161,10 @@ with right_col:
                     "acidity": float(a),
                     "temp": float(t)
                 })
-            except:
+            except Exception:
                 st.error(f"Invalid event format: {line}")
 
-    # Event impact logic
+    # Apply environmental impact
     def apply_event(state, event):
         new_state = state.copy()
 
@@ -175,30 +178,31 @@ with right_col:
 
         return new_state
 
-    # Run prediction
+    # Run Prediction
     if st.button("Run Prediction"):
         input_df = pd.DataFrame([user_inputs])
         current_state = scaler.transform(input_df)
+
+        st.subheader("Prediction Results")
 
         for i, event in enumerate(events):
             pred = model.predict(current_state)[0]
             label = risk_label(pred)
 
             st.markdown(f"""
-### Explanation  
-**Predicted Leachate:** {pred*100:.2f} → **{label}**
+### Event {i+1} Explanation  
+**Predicted Leachate:** {pred * 100:.2f} → **{label}**
 
 This event is **{label.split()[0]}** because:
 """)
 
-            reasons = explain_event_with_shap_simple(pred, user_inputs)
-            for r in reasons:
-                st.write(f"• {r}")
+            for reason in explain_event_simple(pred, user_inputs):
+                st.write(f"• {reason}")
 
             current_state = apply_event(current_state, event)
 
         # Feature Importance
-        st.subheader("Key Factors Influencing the Prediction")
+        st.subheader("What Influenced the Prediction")
 
         imp_df = pd.DataFrame({
             "Feature": feature_cols,
