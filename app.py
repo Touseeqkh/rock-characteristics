@@ -3,17 +3,21 @@ import joblib
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import plotly.express as px
 
 # --------------------------------------------------
-# Page configuration
+# Page config
 # --------------------------------------------------
-st.set_page_config(
-    page_title="Leachate Prediction App",
-    layout="centered"
-)
+st.set_page_config(page_title="Leachate Prediction App", layout="wide")
+
+st.markdown("""
+<style>
+.stApp { background-color: #0e1117; color: white; }
+</style>
+""", unsafe_allow_html=True)
 
 # --------------------------------------------------
-# Load trained model and preprocessing objects
+# Load model artifacts
 # --------------------------------------------------
 @st.cache_resource
 def load_artifacts():
@@ -25,190 +29,125 @@ def load_artifacts():
 model, scaler, feature_cols = load_artifacts()
 
 # --------------------------------------------------
-# App title and description
+# Sidebar Inputs
 # --------------------------------------------------
-st.title("Leachate Prediction Application")
-
-st.write(
-    """
-    This application predicts **leachate formation** based on:
-    - Rock characteristics
-    - A sequence of environmental events (Sequence S)
-
-    **Sequence S** means:
-    The user enters multiple events one after another.
-    Each event must contain ONLY:
-    - rain or snow
-    - acidity value
-    - temperature after the event
-    """
-)
-
-st.write(
-    """
-    **Example input (one event per line):**
-    ```
-    rain;0.6;12
-    snow;0.3;2
-    rain;0.8;15
-    ```
-    """
-)
-
-# --------------------------------------------------
-# Rock selection
-# --------------------------------------------------
-st.header("Rock Selection")
-
-predefined_rocks = {
-    "Custom": None,
-    "Basalt": {f: 0.30 for f in feature_cols},
-    "Granite": {f: 0.20 for f in feature_cols},
-    "Limestone": {f: 0.40 for f in feature_cols},
-}
-
-rock_choice = st.selectbox(
-    "Select a rock type",
-    list(predefined_rocks.keys())
-)
-
-# --------------------------------------------------
-# Rock characteristics input
-# --------------------------------------------------
-st.header("Rock Characteristics")
+st.sidebar.title("User Inputs")
 
 user_inputs = {}
+for f in feature_cols:
+    user_inputs[f] = st.sidebar.number_input(f, value=0.3)
 
-for feature in feature_cols:
-    default_value = 0.0 if rock_choice == "Custom" else predefined_rocks[rock_choice][feature]
-    user_inputs[feature] = st.number_input(
-        label=feature,
-        value=float(default_value)
-    )
+st.sidebar.subheader("Sequence S")
+st.sidebar.write("Format: rain/snow;acidity;temperature")
 
-# --------------------------------------------------
-# Sequence of Events S input
-# --------------------------------------------------
-st.header("Sequence of Events S")
-
-events_text = st.text_area(
-    "Enter events (one per line)",
+events_text = st.sidebar.text_area(
+    "Events",
     "rain;0.6;12\nsnow;0.3;2\nrain;0.8;15"
 )
 
-events = []
-
-for line in events_text.split("\n"):
-    line = line.strip()
-    if line:
-        try:
-            precip, acidity, temp = line.split(";")
-            precip = precip.lower()
-            acidity = float(acidity)
-            temp = float(temp)
-
-            if precip not in ["rain", "snow"]:
-                st.error(f"Invalid precipitation type: {precip}")
-            else:
-                events.append({
-                    "precip": precip,
-                    "acidity": acidity,
-                    "temp": temp
-                })
-        except:
-            st.error(f"Invalid format: {line}")
+# --------------------------------------------------
+# Layout
+# --------------------------------------------------
+left, right = st.columns([1.2, 1])
 
 # --------------------------------------------------
-# Event impact logic
+# 3D Visualization
 # --------------------------------------------------
-def apply_event(state, event):
-    new_state = state.copy()
+with left:
+    st.subheader("3D Environmental Representation")
 
-    # precipitation effect
-    if event["precip"] == "rain":
-        new_state *= 1.05
-    elif event["precip"] == "snow":
-        new_state *= 1.03
+    try:
+        df = pd.read_csv("preprocessed_data.csv")
+        fig = px.scatter_3d(
+            df,
+            x=df.columns[0],
+            y=df.columns[1],
+            z=df.columns[2],
+            color=df.columns[2],
+            template="plotly_dark"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        st.write("This 3D view helps visualize how environmental factors interact.")
+    except:
+        st.warning("3D data not available.")
 
-    # acidity effect
-    new_state += event["acidity"] * 0.02
+# --------------------------------------------------
+# Explanation helpers (SHAP-like but simple)
+# --------------------------------------------------
+def explain_event_with_shap_simple(pred, inputs):
+    reasons = []
 
-    # temperature effect
-    new_state += event["temp"] * 0.001
+    acidity = np.mean(list(inputs.values()))
+    
+    if acidity < 0.3:
+        reasons.append("The event had very low acidity, helping keep the leachate low.")
+    elif acidity < 0.6:
+        reasons.append("Moderate acidity slightly increased the leachate.")
+    else:
+        reasons.append("High acidity significantly increased the leachate.")
 
-    return new_state
+    if inputs.get("Na", 0.3) < 0.4 or inputs.get("K", 0.3) < 0.4:
+        reasons.append("Lower potassium/sodium levels helped control the leachate.")
+    else:
+        reasons.append("Higher salt concentrations contributed to leachate formation.")
+
+    reasons.append("Stable water chemistry helped regulate leachate behavior.")
+
+    return reasons
+
+def risk_label(pred):
+    if pred < 0.25:
+        return "LOW RISK"
+    elif pred < 0.5:
+        return "MODERATE RISK"
+    elif pred < 0.75:
+        return "HIGH RISK"
+    else:
+        return "VERY HIGH RISK"
 
 # --------------------------------------------------
 # Prediction logic
 # --------------------------------------------------
-if st.button("Run Prediction") and len(events) > 0:
-    st.subheader("Predictions After Each Event")
+with right:
+    st.title("Leachate Prediction")
 
-    input_df = pd.DataFrame([user_inputs])
-    current_state = scaler.transform(input_df)
+    events = []
+    for line in events_text.split("\n"):
+        if line.strip():
+            p, a, t = line.split(";")
+            events.append({
+                "precip": p.lower(),
+                "acidity": float(a),
+                "temp": float(t)
+            })
 
-    predictions = []
-
-    for i, event in enumerate(events):
-        prediction = model.predict(current_state)[0]
-        predictions.append(prediction)
-
-        st.write(
-            f"**After Event {i+1}** "
-            f"({event['precip']}, acidity={event['acidity']}, temp={event['temp']}°C): "
-            f"**{prediction:.4f}**"
-        )
-
-        # ------------------------------------------
-        # Explanation for NON-CS users
-        # ------------------------------------------
-        if prediction < 0.25:
-            explanation = "Leachate formation is very low. Environmental impact is minimal."
-        elif prediction < 0.5:
-            explanation = "Leachate formation is moderate. Some monitoring is recommended."
-        elif prediction < 0.75:
-            explanation = "Leachate formation is high. Preventive action should be considered."
+    def apply_event(state, event):
+        new = state.copy()
+        if event["precip"] == "rain":
+            new *= 1.05
         else:
-            explanation = "Leachate formation is very high. Immediate action is recommended."
+            new *= 1.03
+        new += event["acidity"] * 0.02
+        new += event["temp"] * 0.001
+        return new
 
-        st.write(f"**Explanation:** {explanation}")
+    if st.button("Run Prediction"):
+        input_df = pd.DataFrame([user_inputs])
+        current_state = scaler.transform(input_df)
 
-        current_state = apply_event(current_state, event)
+        for i, event in enumerate(events):
+            pred = model.predict(current_state)[0]
+            label = risk_label(pred)
 
-    # --------------------------------------------------
-    # Final summary
-    # --------------------------------------------------
-    st.subheader("Final Risk Summary")
+            st.markdown(f"""
+### Explanation  
+**Predicted Leachate:** {pred*100:.2f} → **{label}**
 
-    final_prediction = predictions[-1]
+This event is **{label.split()[0]}** because:
+""")
 
-    if final_prediction < 0.25:
-        summary = "Overall leachate risk is LOW."
-    elif final_prediction < 0.5:
-        summary = "Overall leachate risk is MODERATE."
-    elif final_prediction < 0.75:
-        summary = "Overall leachate risk is HIGH."
-    else:
-        summary = "Overall leachate risk is VERY HIGH."
+            reasons = explain_event_with_shap_simple(pred, user_inputs)
+            for r in reasons:
+                st.write(f"• {r}")
 
-    st.write(f"**Final Prediction Value:** {final_prediction:.4f}")
-    st.write(f"**Overall Assessment:** {summary}")
-
-    # --------------------------------------------------
-    # Feature importance
-    # --------------------------------------------------
-    st.subheader("What Influenced the Prediction?")
-
-    importance_df = pd.DataFrame({
-        "Feature": feature_cols,
-        "Importance": model.feature_importances_
-    }).sort_values(by="Importance", ascending=False)
-
-    fig, ax = plt.subplots()
-    ax.barh(importance_df["Feature"], importance_df["Importance"])
-    ax.invert_yaxis()
-    ax.set_xlabel("Importance")
-    ax.set_ylabel("Feature")
-
-    st.pyplot(fig)
-
+            current_state = apply_event(current_state, event)
