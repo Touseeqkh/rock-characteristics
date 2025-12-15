@@ -1,12 +1,4 @@
-# --------------------------------------------------
-# Step 1: Install dependencies (Colab)
-# --------------------------------------------------
-!pip install streamlit openpyxl joblib matplotlib pandas numpy scikit-learn
 
-# --------------------------------------------------
-# Step 2: Write the app.py file
-# --------------------------------------------------
-%%writefile app.py
 import streamlit as st
 import joblib
 import pandas as pd
